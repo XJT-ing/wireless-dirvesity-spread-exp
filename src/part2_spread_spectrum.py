@@ -50,7 +50,16 @@ def generate_m_sequence(register_state, taps, length=None):
         raise ValueError('length must be positive')
 
     # TODO: clock the LFSR and map output bits to bipolar chips.
-    raise NotImplementedError('请实现 m 序列生成')
+    chips = np.empty(length, dtype=float)
+    state = state.copy()
+    for i in range(length):
+        bit = state[-1]
+        chips[i] = 1.0 if bit == 0 else -1.0
+        feedback = 0
+        for tap in taps:
+            feedback ^= state[tap - 1]
+        state = np.concatenate([[feedback], state[:-1]])
+    return chips
 
 
 def dsss_spread(bits, pn_chips):
@@ -66,7 +75,9 @@ def dsss_spread(bits, pn_chips):
         raise ValueError('bits must be a one-dimensional binary array')
 
     # TODO: BPSK-map each bit and multiply by the PN chips.
-    raise NotImplementedError('请实现 DSSS 扩频')
+    mapped = 1.0 - 2.0 * bits
+    chips = np.outer(mapped, pn_chips).ravel()
+    return chips
 
 
 def dsss_despread(received_chips, pn_chips):
@@ -82,7 +93,10 @@ def dsss_despread(received_chips, pn_chips):
         raise ValueError('received_chips length must be a multiple of PN length')
 
     # TODO: reshape by spreading factor, correlate with PN chips, and decide bits.
-    raise NotImplementedError('请实现 DSSS 解扩')
+    sf = len(pn_chips)
+    matrix = received_chips.reshape(-1, sf)
+    correlations = matrix @ pn_chips / sf
+    return (correlations < 0).astype(int)
 
 
 def processing_gain_db(spreading_factor):
@@ -91,7 +105,7 @@ def processing_gain_db(spreading_factor):
         raise ValueError('spreading_factor must be positive')
 
     # TODO: compute 10 * log10(N).
-    raise NotImplementedError('请实现处理增益计算')
+    return 10.0 * np.log10(spreading_factor)
 
 
 def despread_with_timing_offset(received_chips, pn_chips, max_offset):
@@ -99,8 +113,27 @@ def despread_with_timing_offset(received_chips, pn_chips, max_offset):
     if max_offset < 0:
         raise ValueError('max_offset must be non-negative')
 
-    # TODO: 选做：请实现同步偏移搜索解扩。
-    raise NotImplementedError('选做：请实现同步偏移搜索')
+    sf = len(pn_chips)
+    pn_chips = _validate_pn_chips(pn_chips)
+    best_bits = None
+    best_magnitude = -1.0
+
+    for offset in range(max_offset + 1):
+        truncated = received_chips[offset:]
+        usable_len = (len(truncated) // sf) * sf
+        if usable_len < sf:
+            continue
+        truncated = truncated[:usable_len]
+        matrix = truncated.reshape(-1, sf)
+        correlations = matrix @ pn_chips / sf
+        magnitude = float(np.sum(np.abs(correlations)))
+        if magnitude > best_magnitude:
+            best_magnitude = magnitude
+            best_bits = (correlations < 0).astype(int)
+
+    if best_bits is None:
+        raise ValueError('received_chips too short for any valid despreading')
+    return best_bits
 
 
 def _correlation_values(received_chips, pn_chips):
